@@ -25,7 +25,7 @@ EXEC_MAGIC = 'execexec'[::-1]
 DONE_MAGIC = 'donedone'[::-1]
 MEMC_MAGIC = 'memcmemc'[::-1]
 MEMS_MAGIC = 'memsmems'[::-1]
-USB_READ_LIMIT  = 0x8000
+USB_READ_LIMIT  = 0x800
 CMD_TIMEOUT     = 5000
 AES_BLOCK_SIZE  = 16
 AES_ENCRYPT     = 16
@@ -91,8 +91,7 @@ class PwnedUSBDevice():
       data += response[self.cmd_data_offset(0):]
     return data
 
-  def command(self, request_data, response_length):
-    assert 0 <= response_length <= USB_READ_LIMIT
+  def command_no_finish(self, request_data):
     device = dfu.acquire_device()
     assert self.serial_number == device.serial_number
     dfu.send_data(device, '\0' * 16)
@@ -100,6 +99,12 @@ class PwnedUSBDevice():
     device.ctrl_transfer(0xA1, 3, 0, 0, 6, 100)
     device.ctrl_transfer(0xA1, 3, 0, 0, 6, 100)
     dfu.send_data(device, request_data)
+
+    return device
+
+  def command(self, request_data, response_length):
+    assert 0 <= response_length <= USB_READ_LIMIT
+    device = self.command_no_finish(request_data)    
 
     # HACK
     if response_length == 0:
@@ -109,6 +114,20 @@ class PwnedUSBDevice():
     dfu.release_device(device)
     assert len(response) == response_length
     return response
+
+  def execute_no_finish(self, *args):
+    cmd = str()
+    for i in range(len(args)):
+      if isinstance(args[i], (int, long)):
+        cmd += struct.pack('<%s' % self.cmd_arg_type(), args[i])
+      elif isinstance(args[i], basestring) and i == len(args) - 1:
+        cmd += args[i]
+      else:
+        print 'ERROR: usbexec.execute_no_finish: invalid argument at position %s' % i
+        sys.exit(1)
+      if i == 0 and self.platform.arch != 'arm64':
+        cmd += '\0' * 4
+    self.command_no_finish(EXEC_MAGIC + cmd)
 
   def execute(self, response_length, *args):
     cmd = str()
